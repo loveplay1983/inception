@@ -78,6 +78,19 @@ def load_cifar10_data(img_rows, img_cols):
 X_train, y_train, X_test, y_test = load_cifar10_data(112, 112)
 
 ###################### Define deep learning architecture ###########################
+# Auxilliary output
+def aux_output(input_x, output_name):
+
+    input_x = AveragePooling2D((5, 5), strides=3)(input_x)
+    input_x = Conv2D(128, (1, 1), padding='same', activation='relu')(input_x)
+    input_x = Flatten()(input_x)
+    input_x = Dense(1024, activation='relu')(input_x)
+    input_x = Dropout(0.7)(input_x)
+    input_x = Dense(10, activation='softmax', name=output_name)(input_x)
+
+    return input_x
+
+# Inception module 
 def inception_cell(x,
                      filters_1x1,
                      filters_3x3_reduce,   # 1x1 conv
@@ -113,12 +126,12 @@ def inception_cell(x,
             'relu', kernel_initializer=kernel_init, bias_initializer=bias_init)(x)
 
     conv_5x5 = Conv2D(filters_5x5, (1, 1), padding='same', activation='relu', \
-            kernel_initializer=kernel_init, bias_initalizer=bias_init)(conv_5x5_reduce)
+            kernel_initializer=kernel_init, bias_initializer=bias_init)(conv_5x5_reduce)
 
     # First make a max-pooling in (3,3) and stride 1 
     pool_proj_3x3 = MaxPool2D((3, 3), strides=(1, 1), padding='same')(x)
     # Then do a final conv base on the above max-pooling
-    pool_proj = Conv2D(filters_pool_proj, (1, 1), padding='same', activation='relue', \
+    pool_proj = Conv2D(filters_pool_proj, (1, 1), padding='same', activation='relu', \
             kernel_initializer=kernel_init, bias_initializer=bias_init)(pool_proj_3x3)
 
     # Final concatenation of inception cell in which it combines all the different filter elements
@@ -154,7 +167,7 @@ def inception_cell(x,
     output = concatenate([conv_1x1, conv_3x3, conv_5x5, pool_proj], axis=3, name=name)
     
 
-# Initialize the kernel and bias (kernel is a.k.a weight matrix in cnn)
+# Initialize the kernel and bias (kernel is a.k.a weight matrix in "CNN")
 kernel_init = keras.initializers.glorot_uniform()
 bias_init = keras.initializers.Constant(value=.2)
 
@@ -185,20 +198,197 @@ Sometimes we can also include the branch output such as pull one of the inceptio
 dropout and then final dense, i.e. a softmax, then see whether our current network works fine. 
 
 """
+# Before getting into the structure of this inception network, we first make one simple idea clear that is how to seperate layers
+# i.e what exactly is a single layer consisted of.
+# For "CNN" we often put conv and max pooling layer together as one layer
 
 input_layer = Input(shape=(224, 224, 3))            # "from ..engine import Input"
 
 x = Conv2D(64, (7, 7), padding='same', strides=(2, 2), activation='relu', name='conv_1_7x7/2', \
         kernel_initializer=kernel_init, bias_initializer=bias_init)(input_layer)
 
-# Important note and `CNN REVIEW`, max pooling is differently from conv layer where it doesn't count the volume for individual max pooling filter,
+# Important note and `CNN REVIEW`, max pooling is different from conv layer where it doesn't count the volume for individual max pooling filter,
 # rather it use only a 2D filter without volume dim and go through each of the previous corresponding 2D output of the volume,
 # finally, max pooling puts all the piece of result to form a new 3D output, in other words, the volume of the new formed output
 # is usually the number of the channels of the previous layer.
 
-x = MaxPool2D((3,3))
+x = MaxPool2D((3, 3), padding='same', strides=(2, 2), name='max_pool_1_3x3/2')(x)
+
+# The following technic is often used in convolution neural networks in which we first use a 1x1 filter and a 3x3 or ixi(i stands for arbitrary number)
+# right after which is also called "bottle neck". The main idea is to reduce the computational cost.
+x = Conv2D(64, (1, 1), padding='same', strides=(1, 1), activation='relu', name='conv_2a_3x3/1')(x)
+
+x = Conv2D(192, (3, 3), padding='same', strides=(1, 1), activation='relu', name='conv_2b_3x3/1')(x)
+
+x = MaxPool2D((3, 3), padding='same', strides=(2, 2), name='max_pool_2_3x3/2')(x)
 
 
+# First inception cell of layer 3
+x = inception_cell(x,
+                     filters_1x1=64,
+                     filters_3x3_reduce=96,
+                     filters_3x3=128,
+                     filters_5x5_reduce=16,
+                     filters_5x5=32,
+                     filters_pool_proj=32,
+                     name='inception_3a')
+# Second inception cell of layer 3
+x = inception_cell(x,
+                     filters_1x1=128,
+                     filters_3x3_reduce=128,
+                     filters_3x3=192,
+                     filters_5x5_reduce=32,
+                     filters_5x5=96,
+                     filters_pool_proj=64,
+                     name='inception_3b')
+# Pooling for layer 3
+x = MaxPool2D((3, 3), padding='same', strides=(2, 2), name='max_pool_3_3x3/2')(x)
+
+# First inception cell for layer 4
+x = inception_cell(x,
+                   filters_1x1=192,
+                   filters_3x3_reduce=96,
+                   filters_3x3=208,
+                   filters_5x5_reduce=16,
+                   filters_5x4=48,
+                   filters_pool_proj=64,
+                   name='inception_4a')
+
+
+######################## Auxilliary output - x1  #####################################
+
+x1 = aux_output(x, "auxilliary_output_1")
+
+# Second inception cell for layer 4  
+x = inception_cell(x,
+                   filters_1x1=160,
+                   filters_3x3_reduce=112,
+                   filters_3x3=224,
+                   filters_5x5_reduce=24,
+                   filters_5x4=64,
+                   filters_pool_proj=64,
+                   name='inception_4b')
+
+# Thrid inception cell for layer 4
+x = inception_cell(x,
+                   filters_1x1=128,
+                   filters_3x3_reduce=128,
+                   filters_3x3=256,
+                   filters_5x5_reduce=24,
+                   filters_5x4=64,
+                   filters_pool_proj=64,
+                   name='inception_4c')
+
+# Fourth inception cell for layer 4
+x = inception_cell(x,
+                   filters_1x1=112,
+                   filters_3x3_reduce=144,
+                   filters_3x3=288,
+                   filters_5x5_reduce=32,
+                   filters_5x4=64,
+                   filters_pool_proj=64,
+                   name='inception_4d')
+
+######################## Auxilliary output - x2 #####################################
+x2 = aux_output(x, "auxilliary_output_2")
+
+# Fifth inception cell for layer 4
+x = inception_cell(x,
+                   filters_1x1=256,
+                   filters_3x3_reduce=160,
+                   filters_3x3=320,
+                   filters_5x5_reduce=32,
+                   filters_5x4=128,
+                   filters_pool_proj=128,
+                   name='inception_4e')
+
+# Pooling for layer 4
+x = MaxPooling2D((3, 3), padding='same', strides=(2, 2), name='max_pool_4_3x3/2')(x)
+
+# First inception cell for layer 5
+x = inception_cell(x,
+                   filters_1x1=256,
+                   filters_3x3_reduce=160,
+                   filters_3x3=320,
+                   filters_5x5_reduce=32,
+                   filters_5x4=128,
+                   filters_pool_proj=128,
+                   name='inception_5a')
+
+# Second inception cell for layer 5
+x = inception_cell(x,
+                   filters_1x1=384,
+                   filters_3x3_reduce=192,
+                   filters_3x3=384,
+                   filters_5x5_reduce=48,
+                   filters_5x4=128,
+                   filters_pool_proj=128,
+                   name='inception_5b')
+
+# Global pooling for layer 5
+x = GlobalAveragePooling2D(name='avg_pool_5_3x3/1')(x)
+
+# Finally steps
+# Dropout
+
+x = Dropout(0.4)(x)
+
+# Dense
+x = Dense(10, activation='softmax', name='output')(x)
+
+################################  init the model  ############################################
+# Model(input, output, name, *args, **kwargs)
+model = Model(input_layer, [x, x1, x2], name='inception_v1')
+
+###############################  summary the model ##########################################
+model.summary()
+
+############################## run the model ################################################
+epochs = 25
+
+# learning rate initialization
+initial_lrate = 0.01
+
+def decay(epoch, steps=100):
+    
+    initial_lrate = 0.01
+    
+    # decay rate
+    drop = 0.96
+
+    # decay steps
+    epochs_drop = 8
+
+    # decayed_learning_rate = lrate * decay_rate ^ (global_step / decay_steps)
+    lrate = initial_lrate * math.pow(drop, math.floor((1+epoch)/epochs_drop))
+
+    return lrate
+
+sgd = SGD(lr=initial_lrate, momentum=0.9, nesterov=False)
+
+"""
+class LearningRateScheduler(Callback):
+    
+    '''
+    schedule: a function that takes an epoch index as input and current learning rate
+    and returns the new learning rate as output
+
+    verbose: 1 for updating messages and 0 quiet
+    '''
+"""
+lr_sc = LearningRateScheduler(decay, verbose=1)
+
+
+# categorical_crossentropy - For multi-classification
+# loss_weights             - Optional list or dirtionary specifying scalar coefficients
+#                            to weight the loss contributions of different model outputs
+# metrics                  - List of metrics to be evaluated by the model during training 
+#                            and testing, typically you will use metrics=['accuracy']
+model.compile(loss=['categorical_crossentropy', 'categorical_crossentropy', 'categorical_crossentropy'], \
+        loss_weights=[1, 0.3, 0.3], optimizer=sgd, metrics=['accuracy'])
+
+history = model.fit(X_train, [y_train, y_train, y_train], validation_data=(X_test, [y_test, y_test, y_test]), \
+        epochs=epochs, batch_size=256, callbacks=[lr_sc])
 
 
 
